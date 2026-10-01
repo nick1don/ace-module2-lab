@@ -21,6 +21,11 @@ function favicon () {
   return utils.extractFilename(config.get('application.favicon'))
 }
 
+function escapeUsername (name: string): string {
+  const escaped = name.replace(/(^|[^\\])([#!]\{)/g, '$1\\$2')
+  return escaped.startsWith('\\') ? escaped : '\\' + escaped
+}
+
 export function getUserProfile () {
   return async (req: Request, res: Response, next: NextFunction) => {
     let template: string
@@ -58,27 +63,34 @@ export function getUserProfile () {
         if (!code) {
           throw new Error('Username is null')
         }
-        const singleQuoteRegex = /^'(?:[^'\\]|\\.)*'$/
-        const doubleQuoteRegex = /^"(?:[^"\\]|\\.)*"$/
-        const backtickRegex = /^`(?:[^`\\$]|\\.|\$(?!{))*`$/
+        const singleQuoteRegex = /^'(?:[^'\\#!]|\\.|#(?!\{)|!(?!\{))*'$/
+        const doubleQuoteRegex = /^"(?:[^"\\#!]|\\.|#(?!\{)|!(?!\{))*"$/
+        const backtickRegex = /^`(?:[^`\\$#!]|\\.|\$(?!\{)|#(?!\{)|!(?!\{))*`$/
         const numericRegex = /^-?\d+(?:\.\d+)?$/
         const booleanRegex = /^(?:true|false|null|undefined)$/
 
-        const isSafe = singleQuoteRegex.test(code) ||
+        const hasInterpolation = /[#!]\{/.test(code)
+        const isSafe = !hasInterpolation && (
+          singleQuoteRegex.test(code) ||
           doubleQuoteRegex.test(code) ||
           backtickRegex.test(code) ||
           numericRegex.test(code) ||
           booleanRegex.test(code)
+        )
 
         if (!isSafe) {
           throw new Error('Unsafe code execution blocked')
         }
-        username = eval(code) // eslint-disable-line no-eval
+        const evaluated = eval(code) // eslint-disable-line no-eval
+        if (typeof evaluated === 'string' && /[#!]\{/.test(evaluated)) {
+          throw new Error('Unsafe code execution blocked')
+        }
+        username = evaluated
       } catch (err) {
-        username = '\\' + username
+        username = username ? escapeUsername(username) : username
       }
     } else {
-      username = '\\' + username
+      username = username ? escapeUsername(username) : username
     }
 
     const themeKey = config.get<string>('application.theme') as keyof typeof themes
